@@ -1,56 +1,59 @@
-# HyperTile: 3-4x Stable-Diffusion acceleration at 4K resolution!
+# HyperTile: Tiled-optimizations for Stable-Diffusion
 
-**TL-DR**: HyperTile accelerates Stable-Diffusion by tiling the self-attention in the U-Net and VAE at the first depth, avoiding tile-overlap. It maintains full global picture attention even at 4K resolution, resulting in a 3-4x speed increase.
+HyperTile optimizes the self-attention layer within the Stable-Diffusion U-Net and VAE models, resulting in a reduction in computation time ranging from 1 to 4 times, depending on the initial resolution and tile size. The implementation is **exceptionally** straightforward.
 
-**Note**: Please note that the code for this project will be made available by October 8, 2023!
+To get started with HyperTile and experiment using the Jupyter notebook, follow these steps:
 
-## Table of Contents
+1. Clone the repository:
 
-- [Introduction](#introduction)
-- [Motivation](#motivation)
-- [Approach](#approach)
-  - [Implications](#implications)
-- [Performance](#performance)
-- [To-Do List](#To-Do)
+```bash
+git clone https://github.com/tfernd/HyperTile
+cd HyperTile
+```
 
-# Introduction
+2. Open the Jupyter notebook `playground.ipynb` (install _jupyter_ if you don't have it instaled already).
 
-HyperTile's primary objective is to enhance the image generation capabilities of [Stable-Diffusion](https://github.com/Stability-AI/stablediffusion) by enabling the use of 4K resolution. For those acquainted with Stable-Diffusion, it is recognized as a potent tool for producing high-fidelity images. Nonetheless, as is typical with groundbreaking technologies, it encounters obstacles, particularly when confronted with the demands of handling substantial image resolutions, such as 4K or anything exceeding 1K.
+```bash
+jupyter-notebook playground.ipynb
+```
 
-In this context, we will show how HyperTile effectively tackles these challenges, yielding a remarkable 3-4x sped-up in Stable-Diffusion's image generation performance at 4K resolutions, all the while upholding image quality. Prior to delving into the technical intricacies, it is imperative to establish the project's rationale and draw insights from existing methodologies that have informed our approach.
+Alternatively, you can install HyperTile using pip:
 
-## Motivation
+```bash
+pip install git+https://github.com/tfernd/HyperTile
+```
 
-- [Flash-Attention](https://github.com/Dao-AILab/flash-attention) revolutionized the field by introducing faster attention mechanisms, making it feasible to train models on consumer-grade graphics cards.
+## Interested in Integrating It into Your Preferred Web UI?
 
-- In a parallel effort, [TOME](https://github.com/dbolya/tomesd) aimed to expedite SD image generation by reducing the number of "redundant" tokens, resulting in the removal of up to 50% of tokens. While this approach achieved a slight speed increase, it also led to a degradation in image generation quality.
+You can seamlessly incorporate this functionality with just three lines of code:
 
-- On a different front, [MultiDiffusion](https://multidiffusion.github.io/), also known as tiled-diffusion, adopted a novel strategy. Recognizing the computational challenges of computing the full attention matrix, this approach divides the image into distinct "tiles" of fixed size and diffuses these tiles individually. Subsequently, a clever method is employed to reassemble the tiles, reconstructing the complete image by leveraging the overlap between them. [Mixture of Diffusers](https://github.com/albarji/mixture-of-diffusers) pursues a similar approach with subtle variations.
+```python
+from hyper_tile import split_attention
 
-This raises a couple of pivotal questions:
+with split_attention(vae, height, width, vae_chunk):
+    with split_attention(unet, height, width, unet_chunk):
+        # Continue with the rest of your code, including the diffusion process
+```
 
-- Is it possible to find a middle ground between token pruning and preserving image fidelity?
-- Can we attain the synthesis of high-resolution images without sacrificing computational efficiency?
+By adjusting the `vae_chunk` and `unet_chunk` sizes, you can fine-tune your setup according to your specific requirements. For Stable-Diffusion 1.5, it's advisable to keep the chunk size at 256 or 384 for the U-Net, and 128 for VAE.
 
-These queries serve as the impetus for our investigation into "HyperTile," a methodology that combines insights from token reduction strategies inspired by TOME (albeit with distinct approaches) and the tiling concept from MultiDiffusion.
+## Examples
 
-## Approach
+All examples were from images found on the internet or generations of mine. It was upscaled with a loopback=2, and strength between 0.3 and 0.4.
 
-In Stable-Diffusion, specifically version 1.5, the training initially employed $256 \times 256$ images and later extended to $512 \times 512$. Consequently, the model encounters difficulties when pushed beyond these dimensions. The constraint on larger image training stemmed from the absence of Flash-Attention and the associated high computational cost (a challenge addressed by SD-XL).
+**Note**: The only reason why I'm using loopback, is because I'm using a naive upscaler from PIL (Lanczos), which make images very blurry.
 
-The U-Net architecture within Stable-Diffusion reduces image (latents) resolution (tokens) by a factor of 2 (4) at each depth. As a result, attention is computed at resolutions corresponding to $1/(1, 2, 4, 8)^2$ of the original latent dimension (square because attention relies on image width times height, tokens). Consequently, only the initial U-Net depth requires significant attention computation, while subsequent depths handle lower resolutions with minimal computational overhead.
+Woman in a dress: 512x768 -> 1664x2560
+![woman](assets/woman.jpg)
 
-This prompts several critical questions: How can we address this challenge? How can we enhance the process? Is it possible to generate 4K images using Stable-Diffusion while relying on consumer-grade graphics cards?
+Forest 1: 681x503 -> 2816x2048
+![forest1](assets/forest1.jpg)
 
-To tackle this issue, we propose a fusion of concepts drawn from TOME and tiled-diffusion. Our approach involves tiling the query, key, and values exclusively at the initial depth before attention computation and subsequently re-assmpling the data. Essentially, this process transforms the shape from $(b, c, [h, w])$ to $([b, nh, nw], c, [h/nh, w/nw])$. Here, the brackets operator denotes dimension concatenation, with b representing batch, c representing channels, h for height, w for width, and nh/nw indicating the number of chunks in the height/width dimensions. This approach confines attention computation to a localized tile.
+Forest 2: 768x384 -> 3072x1536
+![forest2](assets/forest2.jpg)
 
-You might wonder about potential overlap issues. Since pixels attend only to content within their respective tiles, one might expect overlap concerns. However, this is not the case. At other depths in the model, the entirety of the image is considered, ensuring that attention possesses a holistic view of the image. Consequently, there is no overlap concern to contend with.
-
-### Implications
-
-What does this mean, and why does it matter? The U-Net's four depth levels play a crucial role in enabling the neural network to understand images both locally and globally. At the initial depth, pixels communicate with their nearby counterparts, fostering local awareness. However, as we move to higher levels, the network gains a broader perspective of the entire image. This leads to a critical question: is it necessary for pixels to engage in long-range interactions with distant ones? As we approach the final stages of image generation, pixels mainly focus on a small neighborhood, considering factors like color and shape. Therefore, we can safely eliminate long-range pixel interactions without degrading image quality.
-
-What are the practical implications of these insights? Firstly, it becomes clear that we can generate 4K images using Stable-Diffusion with SD 1.5, and the larger the image, the more speedup we achieve. Additionally, we can now fine-tune Stable-Diffusion with 2K, 2.5K, 3K, or 4K images using consumer-grade graphics cards. This eliminates the issues of duplicated and cloned heads in image generation, which arose because SD was initially trained on $512 \times 512$ resolution images and struggled with larger ones, primarily due to an "overlap" problem, in a sense.
+Forest 3: 512x768 -> 1664x2560
+![forest3](assets/forest3.jpg)
 
 ## Performance
 
@@ -64,15 +67,18 @@ The subsequent graph illustrates the speed-up achieved for each tile-ratio. As t
 
 It's important to note that, currently, I have exclusively tested with the diffusers backend due to its superior performance. Additionally, there is currently no LoRA model available for HD resolution that is compatible with diffusers. Consequently, text-to-image generation, whether tiled or non-tiled, may exhibit aberrations. Addressing this issue necessitates the development of a fine-tuned LoRA model specifically tailored for high-resolution images with a Hyper-Tiled enabled.
 
-## To-Do
+## Limitations
 
-You're convinced, and now you're wondering how to put it into action? Rest assured, I'll be sharing the complete code shortly. In essence, it offers a context manager that you can use to encapsulate your U-Net and VAE, effortlessly managing the tiling process without overlaps or sequential evolution.
+- Stable-Diffusion's training data is based on 512 x 512 images, limiting its effectiveness for larger images. However, you can use an image-to-image approach with reduced `strength` to add details to larger images, especially beneficial when achieving a 3-4 times speed-up for very large images, typically in the 3-4K resolution range.
 
-**TODO List:**
+- When working at 4K resolution with 16 GB VRAM, the diffusion process functions properly. However, the VAE implementation within `diffusers` struggles to decode the latents, even with the sliced-vae option enabled, resulting in out-of-memory errors. Further investigation into this issue is warranted.
 
-- [ ] Add examples
-- [ ] Share the Code
-- [ ] Develop an Automatic1111 WebUI Extension for Hyper-Tile
-- [ ] Initiate a Fork and Submit a Pull Request to Kohya-ss for Training Large Image LoRAS
+- In some cases, you may notice soft tiles in the images, which are not conventional hard tiles. These soft tiles may contain more detail. One potential mitigation strategy is to alternate the tile sizes. For example, use a set of smaller tiles initially and then gradually transition to slightly larger ones. Alternatively, consider using larger tiles at the beginning and smaller ones towards the end of the process. This approach is still under exploration for optimization.
 
-Stay tuned for the forthcoming code release, by 8/10/2023!
+## Future
+
+- Try to tile the second depth of the U-Net, using bigger chunks, or training an LoRA to remove problems. Is it worth it?
+
+- Identify other areas of the U-Net that can be tiled.
+
+- Tile Rotation: With each function call, a varying tile size is employed to prevent any overlap-related concerns in some special circunstances.

@@ -1,3 +1,17 @@
 *.pyc
+.ipynb_checkpoints
 
+# Dev
 /dev
+format.bat
+/*.jpg
+/*.jpeg
+/*.png
+
+# test notebook
+/* copy.ipynb
+
+# build
+/build
+/dist
+/*.egg-info
