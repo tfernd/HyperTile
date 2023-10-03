@@ -11,15 +11,21 @@ def flush() -> None:
         torch.cuda.ipc_collect()
 
 
-def auto_tile(value: int, chunk: int, min_chunk: int) -> int:
-    """
-    Automatically calculate the tiling size for a given `value` based on a `chunk` size.
-    """
+def possible_tile_sizes(
+    dimension: int,
+    tile_size: int,
+    min_tile_size: int,
+    tile_options: int,
+) -> list[int]:
+    assert tile_options >= 1
 
-    min_chunk = min(min_chunk, chunk, value)
+    min_tile_size = min(min_tile_size, tile_size, dimension)
 
-    idx = torch.arange(min_chunk, value + 1)
-    divisors = idx[value == value // idx * idx]
-    pos = divisors.sub(chunk).abs().argmin()
+    idx = torch.arange(min_tile_size, dimension + 1)
+    divisors = idx[dimension == dimension // idx * idx]
+    pos = divisors.sub(tile_size).abs().argsort()
+    pos = pos[:tile_options]
 
-    return value // int(divisors[pos].item())
+    n = dimension // divisors[pos]
+
+    return n.tolist()

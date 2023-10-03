@@ -8,8 +8,13 @@ format.bat
 /*.jpeg
 /*.png
 
+# stabilidty
+/ldm
+/config
+
 # test notebook
 /* copy.ipynb
+/debug.ipynb
 
 # build
 /build

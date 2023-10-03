@@ -1,109 +1,77 @@
 from __future__ import annotations
-from typing import Callable, Literal
+from typing import Callable
 
 import logging
 from functools import wraps
 from contextlib import contextmanager
 
+import random
 import math
+import torch.nn as nn
 from einops import rearrange
 
-from diffusers import UNet2DConditionModel, AutoencoderKL
-
-from .utils import auto_tile
+from .utils import possible_tile_sizes
 
 
 @contextmanager
 def split_attention(
-    # TODO add support for CompVis
-    layer: UNet2DConditionModel | AutoencoderKL,
+    layer: nn.Module,
     /,
     height: int,
     width: int,
     *,
-    # TODO make this into a list, so we select depth by chunks
-    chunk: int = 384,
-    min_chunk: int = 384, 
-    # TODO remove depth in favor of chunk list
-    depth: Literal[0, 1, 2, 3] = 0,  # ! >= 1 produces garbage! LoRA can fix it? bigger scaling chunks?
+    tile_size: int = 256,
+    min_tile_size: int = 128,
+    swap_size: int = 1,
     disable: bool = False,
 ):
-    """
-    A context manager for splitting attention within a Stable-Diffusion layer.
+    # Hijacks AttnBlock from ldm and Attention from diffusers
 
-    Args:
-        layer (UNet2DConditionModel | AutoencoderKL): The Stable-Diffusion layer to apply attention splitting to.
-        height (int): The height of the input data.
-        width (int): The width of the input data.
-        chunk (int, optional): The size of the chunks for tiling attention. Default is 384.
-        min_chunk (int, optional): The minimum chunk size. Chunks smaller than this are not recommended. Default is 384.
-        depth (Literal[0, 1, 2, 3], optional): The depth of the attention splitting. Default is 0.
-        disable (bool, optional): Disable attention splitting. Default is False.
-
-    Yields:
-        None: When attention splitting is disabled or not applicable for the given layer.
-
-    Raises:
-        ValueError: If an unsupported layer type is provided.
-
-    Example:
-        with split_attention(my_layer, height=512, width=512, chunk=256):
-            ...
-            # Perform operations with attention splitting.
-        # Attention splitting is automatically restored after the context.
-    """
-
-    # Aspect ratio
-    ar = height / width
-
-    nh = auto_tile(height, chunk, min_chunk)
-    nw = auto_tile(width, chunk, min_chunk)
-
-    if nh * nw == 1 or disable:
+    if disable:
         logging.info(f"Attention for {layer.__class__.__qualname__} not splitted")
         yield
         return
 
-    logging.info(f"Attention for {layer.__class__.__qualname__} split into {nh}x{nw} parts of size {height//nh}x{width//nw}")
+    depth = 0  # ! Needs testing for greather depths
 
-    def vae_attn_hijack(fun: Callable):
-        @wraps(fun)
+    # Aspect ratio
+    ar = height / width
+
+    # Possible sub-grids that fit into the image
+    nhs = possible_tile_sizes(height, tile_size, min_tile_size, swap_size)
+    nws = possible_tile_sizes(width, tile_size, min_tile_size, swap_size)
+
+    # Random sub-grid indices # TODO remove randomness
+    make_ns = lambda: (nhs[random.randint(0, len(nhs) - 1)], nws[random.randint(0, len(nws) - 1)])
+
+    H, W = [height // s for s in nhs], [width // s for s in nws]
+    logging.info(
+        f"Attention for {layer.__class__.__qualname__} split image of size {height}x{width} into {nhs if len(nhs)>1 else nhs[0]}x{nws if len(nws)>1 else nws[0]} tiles of sizes {H}x{W}"
+    )
+
+    def self_attn_forward(forward: Callable) -> Callable:
+        @wraps(forward)
         def wrapper(*args, **kwargs):
-            # yes, it's just that!
-            x = rearrange(args[0], "b c (nh h) (nw w) -> (b nh nw) c h w", nh=nh, nw=nw)
-            out = fun(x, *args[1:], **kwargs)
-            out = rearrange(out, "(b nh nw) c h w -> b c (nh h) (nw w)", nh=nh, nw=nw)
+            nh, nw = make_ns()
 
-            return out
-
-        return wrapper
-
-    def unet_attn1_hijack(fun: Callable):
-        @wraps(fun)
-        def wrapper(*args, **kwargs):
             x = args[0]
+            if x.ndim == 4:  # VAE or U-Net
+                x = rearrange(x, "b c (nh h) (nw w) -> (b nh nw) c h w", nh=nh, nw=nw)
+                out = forward(x, *args[1:], **kwargs)
+                out = rearrange(out, "(b nh nw) c h w -> b c (nh h) (nw w)", nh=nh, nw=nw)
+            else:
+                hw = x.size(1)
+                h, w = round(math.sqrt(ar * hw)), round(math.sqrt(hw / ar))
 
-            # Find size of the downsampled latents
-            hw = x.size(1)
-            h = round(math.sqrt(ar * hw))
-            w = round(h / ar)
-            assert h * w == hw
+                down_ratio = height // 8 // h
+                curr_depth = round(math.log(down_ratio, 2))
 
-            # Find the downsampling depth
-            curr_depth = round(math.log(height // h // 8, 2))  # 8 is specific for Stable-Diffusion latents downsampling
-            assert curr_depth in (0, 1, 2, 3)
+                nh, nw = (1, 1) if curr_depth > depth else (nh, nw)
 
-            # Can this layer be splitted?
-            can_split = curr_depth <= depth and h % nh == 0 and w % nw == 0  # ? why the latter would be the case?
-
-            if can_split:
-                # separate hw, split h and w so we merge the factors to the batch dimension
                 x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
 
-            out = fun(x, *args[1:], **kwargs)
+                out = forward(x, *args[1:], **kwargs)
 
-            if can_split:
-                # Reverse
                 out = rearrange(out, "(b nh nw) hw c -> b nh nw hw c", nh=nh, nw=nw)
                 out = rearrange(out, "b nh nw (h w) c -> b (nh h nw w) c", h=h // nh, w=w // nw)
 
@@ -111,28 +79,22 @@ def split_attention(
 
         return wrapper
 
+    # Handle hikajing the forward methdo and recovering after
     try:
         for name, module in layer.named_modules():
-            # unet self-attention or VAE
-            is_good_layer = name.endswith("attn1") or name.endswith("mid_block.attentions.0")
+            if module.__class__.__qualname__ in ("Attention", "CrossAttention", "AttnBlock"):
+                # skip cross-attention layers
+                if name.endswith("attn2") or name.endswith("attn_2"):
+                    continue
 
-            if module.__class__.__qualname__ == "Attention" and is_good_layer:
+                # save original forward for recovery later
                 setattr(module, "_original_forward", module.forward)
-
-                # Hijack forward method of VAE and U-Net
-                if isinstance(layer, UNet2DConditionModel):
-                    setattr(module, "forward", unet_attn1_hijack(module.forward))
-                elif isinstance(layer, AutoencoderKL):
-                    setattr(module, "forward", vae_attn_hijack(module.forward))
-                else:
-                    raise ValueError("!")
+                setattr(module, "forward", self_attn_forward(module.forward))
         yield
-    except Exception as e:
-        logging.error(f"Failed to split attention: {e}")
-        raise e
     finally:
         for name, module in layer.named_modules():
-            # Remove hijack
+            # remove hijack
             if hasattr(module, "_original_forward"):
                 setattr(module, "forward", module._original_forward)
                 del module._original_forward
+
