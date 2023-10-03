@@ -97,4 +97,3 @@ def split_attention(
             if hasattr(module, "_original_forward"):
                 setattr(module, "forward", module._original_forward)
                 del module._original_forward
-
