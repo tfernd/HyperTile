@@ -30,3 +30,9 @@ def possible_tile_sizes(
     pos = pos[:tile_options]
 
     return n[pos].tolist()
+
+
+def parse_list(x: list[int], /) -> str:
+    if len(x) == 0:
+        return str(x[0])
+    return str(x)
