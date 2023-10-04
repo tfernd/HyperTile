@@ -66,14 +66,17 @@ def split_attention(
                 down_ratio = height // 8 // h
                 curr_depth = round(math.log(down_ratio, 2))
 
-                nh, nw = (1, 1) if curr_depth > depth else (nh, nw)
+                # TODO why we need the second branches?
+                do_split = curr_depth <= depth and h % nh == 0 and w % nw == 0
 
-                x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
+                if do_split:
+                    x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
 
                 out = forward(x, *args[1:], **kwargs)
 
-                out = rearrange(out, "(b nh nw) hw c -> b nh nw hw c", nh=nh, nw=nw)
-                out = rearrange(out, "b nh nw (h w) c -> b (nh h nw w) c", h=h // nh, w=w // nw)
+                if do_split:
+                    out = rearrange(out, "(b nh nw) hw c -> b nh nw hw c", nh=nh, nw=nw)
+                    out = rearrange(out, "b nh nw (h w) c -> b (nh h nw w) c", h=h // nh, w=w // nw)
 
             return out
 

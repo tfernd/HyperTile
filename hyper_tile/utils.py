@@ -21,12 +21,12 @@ def possible_tile_sizes(
 
     min_tile_size = min(min_tile_size, tile_size, dimension)
 
-    idx = torch.arange(min_tile_size, dimension + 1)
-    idx = idx[idx == idx // 8 * 8]  # multiples of 8 only!
-    divisors = idx[dimension == dimension // idx * idx]
-    pos = divisors.sub(tile_size).abs().argsort()
+    # all divisors that are themselves divisible by 8 and give tile-size above min
+    n = torch.arange(1, dimension + 1)
+    n = n[dimension // n // 8 * 8 * n == dimension]
+    n = n[dimension // n >= min_tile_size]
+
+    pos = (dimension // n).sub(tile_size).abs().argsort()
     pos = pos[:tile_options]
 
-    n = dimension // divisors[pos]
-
-    return n.tolist()
+    return n[pos].tolist()
