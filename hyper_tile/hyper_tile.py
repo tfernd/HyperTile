@@ -45,7 +45,7 @@ def split_attention(
     make_ns = lambda: (nhs[random.randint(0, len(nhs) - 1)], nws[random.randint(0, len(nws) - 1)])
 
     H, W = [height // s for s in nhs], [width // s for s in nws]
-    logging.info(
+    print(
         f"Attention for {layer.__class__.__qualname__} split image of size {height}x{width} into {nhs if len(nhs)>1 else nhs[0]}x{nws if len(nws)>1 else nws[0]} tiles of sizes {H}x{W}"
     )
 
