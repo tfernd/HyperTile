@@ -118,7 +118,7 @@ def split_attention(
                 nh = random_divisor(h, latent_tile_size * factor, swap_size)
                 nw = random_divisor(w, latent_tile_size * factor, swap_size)
 
-                module._split_sizes.append((nh, nw)) # type: ignore
+                module._split_sizes.append((nh, nw))  # type: ignore
 
                 if nh * nw > 1:
                     x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
@@ -146,17 +146,15 @@ def split_attention(
                 setattr(module, "_original_forward", module.forward)
                 setattr(module, "forward", self_attn_forward(module.forward, depth, layer_name, module))
 
-                setattr(module, '_split_sizes', [])
+                setattr(module, "_split_sizes", [])
         yield
     finally:
         for layer_name, module in layer.named_modules():
             # remove hijack
             if hasattr(module, "_original_forward"):
                 if module._split_sizes:
-                    logging.debug(f'layer {layer_name} splitted with ({module._split_sizes})')
+                    logging.debug(f"layer {layer_name} splitted with ({module._split_sizes})")
 
                 setattr(module, "forward", module._original_forward)
                 del module._original_forward
                 del module._split_sizes
-
-
