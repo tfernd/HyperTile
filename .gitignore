@@ -12,9 +12,9 @@ format.bat
 /ldm
 /config
 
-# test notebook
-/* copy.ipynb
-/debug.ipynb
+# notebook
+/*.ipynb
+!/playground.ipynb
 
 # build
 /build

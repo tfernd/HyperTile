@@ -1,30 +1,84 @@
 from __future__ import annotations
 from typing import Callable
+from typing_extensions import Literal
 
 import logging
 from functools import wraps
 from contextlib import contextmanager
 
-import random
 import math
 import torch.nn as nn
 from einops import rearrange
 
-from .utils import possible_tile_sizes, parse_list
+from .utils import random_divisor
+
+
+# TODO add SD-XL layers
+DEPTH_LAYERS = {
+    0: [
+        # SD 1.5 U-Net (diffusers)
+        "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
+        "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+        # SD 1.5 U-Net (ldm)
+        "model.diffusion_model.input_blocks.1.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.input_blocks.2.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.9.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.10.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.11.1.transformer_blocks.0.attn1",
+        # SD 1.5 VAE
+        "decoder.mid_block.attentions.0",
+    ],
+    1: [
+        # SD 1.5 U-Net (diffusers)
+        "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+        "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+        # SD 1.5 U-Net (ldm)
+        "model.diffusion_model.input_blocks.4.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.input_blocks.5.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.6.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.7.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.8.1.transformer_blocks.0.attn1",
+    ],
+    2: [
+        # SD 1.5 U-Net (diffusers)
+        "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+        "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+        # SD 1.5 U-Net (ldm)
+        "model.diffusion_model.input_blocks.7.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.input_blocks.8.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.3.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.4.1.transformer_blocks.0.attn1",
+        "model.diffusion_model.output_blocks.5.1.transformer_blocks.0.attn1",
+    ],
+    3: [
+        # SD 1.5 U-Net (diffusers)
+        "mid_block.attentions.0.transformer_blocks.0.attn1",
+        # SD 1.5 U-Net (ldm)
+        "model.diffusion_model.middle_block.1.transformer_blocks.0.attn1",
+    ],
+}
 
 
 @contextmanager
 def split_attention(
     layer: nn.Module,
     /,
-    height: int,
-    width: int,
+    aspect_ratio: float,  # width/height
+    tile_size: int = 256,  # 128 for VAE
+    swap_size: int = 2,  # 1 for VAE
     *,
-    tile_size: int = 256,
-    min_tile_size: int = 256,  # 128 for VAE
-    swap_size: int = 1,  # 2 for U-Net
     disable: bool = False,
-    depth: int = 0,  # ! keep at 0
+    max_depth: Literal[0, 1, 2, 3] = 0,  # ! Try 0 or 1
+    scale_depth: bool = False,  # scale the tile-size depending on the depth
 ):
     # Hijacks AttnBlock from ldm and Attention from diffusers
 
@@ -33,28 +87,20 @@ def split_attention(
         yield
         return
 
-    # Aspect ratio
-    ar = height / width
+    latent_tile_size = max(32, tile_size) // 8
 
-    # Possible sub-grids that fit into the image
-    nhs = possible_tile_sizes(height, tile_size, min_tile_size, swap_size)
-    nws = possible_tile_sizes(width, tile_size, min_tile_size, swap_size)
-
-    # Random sub-grid indices # TODO remove randomness. seed?
-    make_ns = lambda: (nhs[random.randint(0, len(nhs) - 1)], nws[random.randint(0, len(nws) - 1)])
-
-    H, W = [height // s for s in nhs], [width // s for s in nws]
-    print(
-        f"Attention for {layer.__class__.__qualname__} split image of size {height}x{width} into {parse_list(nhs)}x{parse_list(nws)} tiles of sizes {parse_list(H)}x{parse_list(W)}"
-    )
-
-    def self_attn_forward(forward: Callable) -> Callable:
+    def self_attn_forward(forward: Callable, depth: int, layer_name: str, module: nn.Module) -> Callable:
         @wraps(forward)
         def wrapper(*args, **kwargs):
-            nh, nw = make_ns()
-
             x = args[0]
-            if x.ndim == 4:  # VAE or U-Net
+
+            # VAE
+            if x.ndim == 4:
+                b, c, h, w = x.shape
+
+                nh = random_divisor(h, latent_tile_size, swap_size)
+                nw = random_divisor(w, latent_tile_size, swap_size)
+
                 if nh * nw > 1:
                     x = rearrange(x, "b c (nh h) (nw w) -> (b nh nw) c h w", nh=nh, nw=nw)
 
@@ -62,26 +108,24 @@ def split_attention(
 
                 if nh * nw > 1:
                     out = rearrange(out, "(b nh nw) c h w -> b c (nh h) (nw w)", nh=nh, nw=nw)
+
+            # U-Net
             else:
                 hw = x.size(1)
-                h, w = round(math.sqrt(ar * hw)), round(math.sqrt(hw / ar))
+                h, w = round(math.sqrt(hw * aspect_ratio)), round(math.sqrt(hw / aspect_ratio))
 
-                down_ratio = height // 8 // h
-                curr_depth = round(math.log(down_ratio, 2))
+                factor = 2**depth if scale_depth else 1
+                nh = random_divisor(h, latent_tile_size * factor, swap_size)
+                nw = random_divisor(w, latent_tile_size * factor, swap_size)
 
-                # Scale-up the tile-size the deeper we go
-                nh = max(1, nh // down_ratio)
-                nw = max(1, nw // down_ratio)
+                module._split_sizes.append((nh, nw)) # type: ignore
 
-                do_split = curr_depth <= depth and h % nh == 0 and w % nw == 0 and nh * nw > 1
-
-                if do_split:
-                    # print((h, w), (nh, nw), curr_depth, down_ratio)
+                if nh * nw > 1:
                     x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
 
                 out = forward(x, *args[1:], **kwargs)
 
-                if do_split:
+                if nh * nw > 1:
                     out = rearrange(out, "(b nh nw) hw c -> b nh nw hw c", nh=nh, nw=nw)
                     out = rearrange(out, "b nh nw (h w) c -> b (nh h nw w) c", h=h // nh, w=w // nw)
 
@@ -89,21 +133,30 @@ def split_attention(
 
         return wrapper
 
-    # Handle hikajing the forward methdo and recovering after
+    # Handle hikajing the forward method and recovering afterwards
     try:
-        for name, module in layer.named_modules():
-            if module.__class__.__qualname__ in ("Attention", "CrossAttention", "AttnBlock"):
-                # skip cross-attention layers
-                if name.endswith("attn2") or name.endswith("attn_2"):
+        for depth in range(max_depth + 1):
+            for layer_name, module in layer.named_modules():
+                if layer_name not in DEPTH_LAYERS[depth]:
                     continue
+
+                print(f"HyperTile hijacking attention layer at depth {depth}: {layer_name}")
 
                 # save original forward for recovery later
                 setattr(module, "_original_forward", module.forward)
-                setattr(module, "forward", self_attn_forward(module.forward))
+                setattr(module, "forward", self_attn_forward(module.forward, depth, layer_name, module))
+
+                setattr(module, '_split_sizes', [])
         yield
     finally:
-        for name, module in layer.named_modules():
+        for layer_name, module in layer.named_modules():
             # remove hijack
             if hasattr(module, "_original_forward"):
+                if module._split_sizes:
+                    logging.debug(f'layer {layer_name} splitted with ({module._split_sizes})')
+
                 setattr(module, "forward", module._original_forward)
                 del module._original_forward
+                del module._split_sizes
+
+

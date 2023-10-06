@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import torch
+import random
 
 
 def flush() -> None:
@@ -11,28 +12,14 @@ def flush() -> None:
         torch.cuda.ipc_collect()
 
 
-def possible_tile_sizes(
-    dimension: int,
-    tile_size: int,
-    min_tile_size: int,
-    tile_options: int,
-) -> list[int]:
-    assert tile_options >= 1
+def random_divisor(value: int, min_value: int, /, max_options: int = 1) -> int:
+    min_value = min(min_value, value)
 
-    min_tile_size = min(min_tile_size, tile_size, dimension)
+    # All big divisors of value (inclusive)
+    divisors = [i for i in range(min_value, value + 1) if value % i == 0]
 
-    # all divisors that are themselves divisible by 8 and give tile-size above min
-    n = torch.arange(1, dimension + 1)
-    n = n[dimension // n // 8 * 8 * n == dimension]
-    n = n[dimension // n >= min_tile_size]
+    ns = [value // i for i in divisors[:max_options]]  # has at least 1 element
 
-    pos = (dimension // n).sub(tile_size).abs().argsort()
-    pos = pos[:tile_options]
+    idx = random.randint(0, len(ns) - 1)
 
-    return n[pos].tolist()
-
-
-def parse_list(x: list[int], /) -> str:
-    if len(x) == 0:
-        return str(x[0])
-    return str(x)
+    return ns[idx]
