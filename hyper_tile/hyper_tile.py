@@ -23,11 +23,11 @@ DEPTH_LAYERS = {
         "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
         "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
         # SD 1.5 U-Net (ldm)
-        "model.diffusion_model.input_blocks.1.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.input_blocks.2.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.9.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.10.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.11.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.1.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.2.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.9.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.10.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.11.1.transformer_blocks.0.attn1",
         # SD 1.5 VAE
         "decoder.mid_block.attentions.0",
     ],
@@ -39,11 +39,11 @@ DEPTH_LAYERS = {
         "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
         "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
         # SD 1.5 U-Net (ldm)
-        "model.diffusion_model.input_blocks.4.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.input_blocks.5.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.6.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.7.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.8.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.4.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.5.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.6.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.7.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.8.1.transformer_blocks.0.attn1",
     ],
     2: [
         # SD 1.5 U-Net (diffusers)
@@ -53,17 +53,17 @@ DEPTH_LAYERS = {
         "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
         "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
         # SD 1.5 U-Net (ldm)
-        "model.diffusion_model.input_blocks.7.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.input_blocks.8.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.3.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.4.1.transformer_blocks.0.attn1",
-        "model.diffusion_model.output_blocks.5.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.7.1.transformer_blocks.0.attn1",
+        "diffusion_model.input_blocks.8.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.3.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.4.1.transformer_blocks.0.attn1",
+        "diffusion_model.output_blocks.5.1.transformer_blocks.0.attn1",
     ],
     3: [
         # SD 1.5 U-Net (diffusers)
         "mid_block.attentions.0.transformer_blocks.0.attn1",
         # SD 1.5 U-Net (ldm)
-        "model.diffusion_model.middle_block.1.transformer_blocks.0.attn1",
+        "diffusion_model.middle_block.1.transformer_blocks.0.attn1",
     ],
 }
 
