@@ -10,7 +10,7 @@ import math
 import torch.nn as nn
 from einops import rearrange
 
-from .utils import random_divisor
+from .utils import random_divisor, find_hw_candidates
 
 
 # TODO add SD-XL layers
@@ -112,13 +112,15 @@ def split_attention(
             # U-Net
             else:
                 hw = x.size(1)
-                h, w = round(math.sqrt(hw * aspect_ratio)), round(math.sqrt(hw / aspect_ratio))
+                h, w = find_hw_candidates(hw, aspect_ratio)
+                # h*w should be equal to hw
+                assert h * w == hw, f"Invalid aspect ratio {aspect_ratio} for input of shape {x.shape}"
 
                 factor = 2**depth if scale_depth else 1
                 nh = random_divisor(h, latent_tile_size * factor, swap_size)
                 nw = random_divisor(w, latent_tile_size * factor, swap_size)
 
-                module._split_sizes.append((nh, nw))  # type: ignore
+                module._split_sizes_hypertile.append((nh, nw))  # type: ignore
 
                 if nh * nw > 1:
                     x = rearrange(x, "b (nh h nw w) c -> (b nh nw) (h w) c", h=h // nh, w=w // nw, nh=nh, nw=nw)
@@ -141,18 +143,18 @@ def split_attention(
                     logging.info(f"HyperTile hijacking attention layer at depth {depth}: {layer_name}")
 
                     # save original forward for recovery later
-                    setattr(module, "_original_forward", module.forward)
+                    setattr(module, "_original_forward_hypertile", module.forward)
                     setattr(module, "forward", self_attn_forward(module.forward, depth, layer_name, module))
 
-                    setattr(module, "_split_sizes", [])
+                    setattr(module, "_split_sizes_hypertile", [])
         yield
     finally:
         for layer_name, module in layer.named_modules():
             # remove hijack
-            if hasattr(module, "_original_forward"):
-                if module._split_sizes:
-                    logging.debug(f"layer {layer_name} splitted with ({module._split_sizes})")
+            if hasattr(module, "_original_forward_hypertile"):
+                if module._split_sizes_hypertile:
+                    logging.debug(f"layer {layer_name} splitted with ({module._split_sizes_hypertile})")
 
-                setattr(module, "forward", module._original_forward)
-                del module._original_forward
-                del module._split_sizes
+                setattr(module, "forward", module._original_forward_hypertile)
+                del module._original_forward_hypertile
+                del module._split_sizes_hypertile

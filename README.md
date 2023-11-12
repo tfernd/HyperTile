@@ -25,14 +25,21 @@ pip install git+https://github.com/tfernd/HyperTile
 
 ## Interested in Integrating It into Your Preferred Web UI?
 
-You can seamlessly incorporate this functionality with just three lines of code:
+You can seamlessly incorporate this functionality with just three lines of code: (For safety, hijack when other hijacking codes are already processed)
 
 ```python
 from hyper_tile import split_attention
+# some other hijacking codes
+orig_unet_forward = unet.forward
+unet.forward = hijacked_forward_before_action(unet.forward, other_module)
 
-with split_attention(vae, height, width, vae_chunk):
-    with split_attention(unet, height, width, unet_chunk):
+
+with split_attention(vae, width/height, tile_size=vae_chunk):
+    with split_attention(unet, width/height, tile_size=unet_chunk):
         # Continue with the rest of your code, including the diffusion process
+
+# recover the original forward function
+unet.forward = orig_unet_forward
 ```
 
 By adjusting the `vae_chunk` and `unet_chunk` sizes, you can fine-tune your setup according to your specific requirements. For Stable-Diffusion 1.5, it's advisable to keep the chunk size at 256 or 384 for the U-Net, and 128 for VAE.
@@ -82,3 +89,21 @@ It's important to note that, currently, I have exclusively tested with the diffu
 - Identify other areas of the U-Net that can be tiled.
 
 - Tile Rotation: With each function call, a varying tile size is employed to prevent any overlap-related concerns in some special circunstances.
+
+## Deterministic Behavior
+
+- Currently, it uses random module's RNG to randomly divide the orders of tiles.
+
+- To make it deterministic, call the following code snippet before the diffusion process:
+
+```python
+import random
+state = random.getstate()
+
+random.seed(0)
+# call your code then
+...
+# restore the state
+random.setstate(state)
+
+```
