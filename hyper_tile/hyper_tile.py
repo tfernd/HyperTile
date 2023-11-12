@@ -10,7 +10,7 @@ import math
 import torch.nn as nn
 from einops import rearrange
 
-from .utils import random_divisor
+from .utils import random_divisor, find_hw_candidates
 
 
 # TODO add SD-XL layers
@@ -112,7 +112,7 @@ def split_attention(
             # U-Net
             else:
                 hw = x.size(1)
-                h, w = round(math.sqrt(hw * aspect_ratio)), round(math.sqrt(hw / aspect_ratio))
+                h, w = find_hw_candidates(hw, aspect_ratio)
                 # h*w should be equal to hw
                 assert h * w == hw, f"Invalid aspect ratio {aspect_ratio} for input of shape {x.shape}"
 
